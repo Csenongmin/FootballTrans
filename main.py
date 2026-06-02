@@ -1,4 +1,4 @@
-from model.model import MorphologySequenceDataset, LSTMMorphologyModel
+from model.model import MorphologySequenceDataset, LSTMMorphologyModel, TransformerMorphologyModel
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -14,7 +14,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 batch_size = 64
-dataset_first_df = pd.read_csv("tracking_first_with_morphology.csv")
+defensive_df = pd.read_csv("tracking_first_defensive.csv")
 
 def get_predictions(model, loader, device):
     model.eval()
@@ -38,13 +38,63 @@ def get_predictions(model, loader, device):
     return np.concatenate(all_labels), np.concatenate(all_preds)
 
 if __name__ == '__main__':    
-    feature_cols = [
-        col for col in dataset_first_df.columns
-        if col not in ["morphology", "morphology_id"]
+    # ------A. Home 11 + Away 11 + ball 1 ----- #
+    feature_cols_A = [
+        col for col in defensive_df.columns
+        if col not in [
+            "morphology",
+            "morphology_id",
+            "possession",
+            "frame",
+            "frame_diff",
+            "segment_id"
+        ]
     ]
+    # -----B. Home 7(no defense) + Away 11 + ball 1 ---- #
+    # Home 4-back 수비수 목록
+    home_4back_players = ["H2", "H3", "H7", "H10"]
+   
+    # # 제거할 4-back 좌표 column
+    exclude_4back_cols = []
+    
+    for p in home_4back_players:
+        exclude_4back_cols.extend([f"{p}_x", f"{p}_y"])
+    
+    print("제거할 Home 4-back columns:")
+    print(exclude_4back_cols)
+
+    non_feature_cols = [
+        "morphology",
+        "morphology_id",
+        "possession",
+        "frame",
+        "frame_diff",
+        "segment_id"
+    ]
+
+    # 실험 B feature columns
+    feature_cols_B = [
+        col for col in defensive_df.columns
+        if col not in non_feature_cols
+        and col not in exclude_4back_cols
+    ]
+    # --------- C. Away 4 + Ball 1 -------- #
+    away_4attack_players = ["A3", "A5" ,"A8", "A10"]
+    include_4attk_cols = []
+    for p in away_4attack_players:
+        include_4attk_cols.extend([f"{p}_x", f"{p}_y"])
+    include_4attk_cols.append('ball_x')
+    include_4attk_cols.append('ball_y')
+    feature_cols_C = [
+        col for col in defensive_df.columns
+        if col not in non_feature_cols
+        and col in include_4attk_cols
+    ]
+    print(feature_cols_C)
     # --------------lavel encoder --------------#
     le = LabelEncoder()
-    dataset_first_df["morphology_id"] = le.fit_transform(dataset_first_df["morphology"])
+    defensive_df["morphology"] = defensive_df["morphology"].astype(str)
+    defensive_df["morphology_id"] = le.fit_transform(defensive_df["morphology"])
     X_list = []
     y_list = []
 
@@ -52,14 +102,20 @@ if __name__ == '__main__':
     # 75 frame per sequences
     SEQ_LEN = 75
     STRIDE = 5
-    for start in range(0, len(dataset_first_df) - SEQ_LEN + 1, STRIDE):
-        end = start + SEQ_LEN
-
-        X_seq = dataset_first_df.iloc[start:end][feature_cols].values
-        y_seq = dataset_first_df.iloc[start:end]["morphology_id"].values
-
-        X_list.append(X_seq)
-        y_list.append(y_seq)
+    for seg_id, seg_df in defensive_df.groupby("segment_id"):
+        seg_df = seg_df.reset_index(drop=True)
+        
+        if len(seg_df) < SEQ_LEN:
+            continue
+        
+        for start in range(0, len(seg_df) - SEQ_LEN + 1, STRIDE):
+            end = start + SEQ_LEN
+            
+            X_seq = seg_df.iloc[start:end][feature_cols_A].values
+            y_seq = seg_df.iloc[start:end]["morphology_id"].values
+            
+            X_list.append(X_seq)
+            y_list.append(y_seq)
 
     X = np.array(X_list, dtype=np.float32)
     y = np.array(y_list, dtype=np.int64)
@@ -67,7 +123,7 @@ if __name__ == '__main__':
     print(X.shape)
     print(y.shape)
 
-    # --------------- train, validate, test split -----------#
+    # --------------- train, validate, test random split -----------#
     num_samples = len(X)
 
     indices = np.arange(len(X))
@@ -104,15 +160,30 @@ if __name__ == '__main__':
 
     # -------------- Model ---------------#
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = LSTMMorphologyModel(
-        input_dim=46,
-        hidden_dim=128,
-        num_layers=2,
+    input_dim_a = 46
+    input_dim_b = 38
+    
+    input_dim_c = 10
+    # LSTM
+    # model = LSTMMorphologyModel(
+    #     input_dim=input_dim_c,
+    #     hidden_dim=128,
+    #     num_layers=2,
+    #     num_classes=45,
+    #     dropout=0.2
+    # ).to(device)
+    
+    # Transformer
+    model = TransformerMorphologyModel(
+        input_dim=input_dim_a,
         num_classes=45,
+        seq_len=75,
+        d_model=128,
+        nhead=8,
+        num_layers=2,
+        dim_feedforward=256,
         dropout=0.2
     ).to(device)
-
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
 
@@ -172,7 +243,7 @@ if __name__ == '__main__':
     plt.xlabel("Predicted class")
     plt.ylabel("True class")
     plt.title("Confusion Matrix")
-    plt.savefig('confusion.png')
+    plt.savefig('confusion_tr.png')
     cm_norm = cm.astype("float") / cm.sum(axis=1, keepdims=True)
     cm_norm = np.nan_to_num(cm_norm)
 
@@ -183,4 +254,4 @@ if __name__ == '__main__':
     plt.ylabel("True class")
     plt.title("Normalized Confusion Matrix")
 
-    plt.savefig("confusion_matrix_normalized.png", dpi=300, bbox_inches="tight")
+    plt.savefig("confusion_matrix_normalized_tr.png", dpi=300, bbox_inches="tight")

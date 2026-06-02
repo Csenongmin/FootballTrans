@@ -37,3 +37,60 @@ class LSTMMorphologyModel(nn.Module):
         # logits: [batch, seq_len, num_classes]
 
         return logits
+    
+class TransformerMorphologyModel(nn.Module):
+    def __init__(
+            self,
+            input_dim,
+            num_classes,
+            seq_len=75,
+            d_model=128,
+            nhead=8,
+            num_layers=2,
+            dim_feedforward=256,
+            dropout=0.2
+    ):
+        super().__init__()
+        self.seq_len = seq_len
+        self.d_model = d_model
+        
+        #frame feature -> transformer embedding
+        self.input_proj = nn.Linear(input_dim, d_model)
+
+        #learnable positional encoding
+        self.pos_embedding = nn.Parameter(
+            torch.zeros(1,seq_len, d_model)
+        )
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            batch_first=True,
+            activation="gelu"
+        )
+
+        self.transformer_encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers
+        )
+
+        self.classifier = nn.Linear(d_model, num_classes)
+        
+    def forward(self, x):
+        # x: [batch, seq_len, input_dim]
+
+        x = self.input_proj(x)
+        # x: [batch, seq_len, d_model]
+
+        x = x + self.pos_embedding[:, :x.size(1), :]
+        # positional information 추가
+
+        out = self.transformer_encoder(x)
+        # out: [batch, seq_len, d_model]
+
+        logits = self.classifier(out)
+        # logits: [batch, seq_len, num_classes]
+
+        return logits
