@@ -14,7 +14,24 @@ import warnings
 warnings.filterwarnings("ignore")
 
 batch_size = 64
-defensive_df = pd.read_csv("tracking_first_defensive.csv")
+dataset_df = pd.read_csv("combined_defensive.csv")
+all_morphology_classes = [
+    'line','2000','0200','0020','0002',
+    '2220','2202','2022','0222','0022','2200','0202','2020',
+    '1002','2001','1020','0201','2100','0012','0120','0210',
+    '0021','1200','2010','0102','0221','2021','0122','2102',
+    '2201','0212','2120','1022','2012','2210','1202','1220',
+    '0112','1012','0211','1201','1102','0121','1210','2011',
+    '1021','1120','2101','2110','2002','0220'
+]
+
+label_to_id = {
+    label: idx for idx, label in enumerate(all_morphology_classes)
+}
+
+id_to_label = {
+    idx: label for label, idx in label_to_id.items()
+}
 
 def get_predictions(model, loader, device):
     model.eval()
@@ -39,70 +56,61 @@ def get_predictions(model, loader, device):
 
 if __name__ == '__main__':    
     # ------A. Home 11 + Away 11 + ball 1 ----- #
+
     feature_cols_A = [
-        col for col in defensive_df.columns
+        col for col in dataset_df.columns
         if col not in [
             "morphology",
             "morphology_id",
             "possession",
             "frame",
             "frame_diff",
-            "segment_id"
+            "segment_id",
+            "global_segment_id",
+            "defense_team"
         ]
     ]
+
     # -----B. Home 7(no defense) + Away 11 + ball 1 ---- #
-    # Home 4-back 수비수 목록
-    home_4back_players = ["H2", "H3", "H7", "H10"]
-   
-    # # 제거할 4-back 좌표 column
-    exclude_4back_cols = []
-    
-    for p in home_4back_players:
-        exclude_4back_cols.extend([f"{p}_x", f"{p}_y"])
-    
-    print("제거할 Home 4-back columns:")
-    print(exclude_4back_cols)
+    feature_cols_B = []
 
-    non_feature_cols = [
-        "morphology",
-        "morphology_id",
-        "possession",
-        "frame",
-        "frame_diff",
-        "segment_id"
-    ]
+    # 수비팀 나머지 7명만 사용
+    for i in range(1, 8):
+        feature_cols_B += [f"D_other{i}_x", f"D_other{i}_y"]
 
-    # 실험 B feature columns
-    feature_cols_B = [
-        col for col in defensive_df.columns
-        if col not in non_feature_cols
-        and col not in exclude_4back_cols
-    ]
+    # 공격팀 11명
+    for i in range(1, 12):
+        feature_cols_B += [f"O{i}_x", f"O{i}_y"]
+
+    feature_cols_B += ["ball_x", "ball_y"]
+
+    print(len(feature_cols_B))  # 38
+
     # --------- C. Away 4 + Ball 1 -------- #
-    away_4attack_players = ["A3", "A5" ,"A8", "A10"]
-    include_4attk_cols = []
-    for p in away_4attack_players:
-        include_4attk_cols.extend([f"{p}_x", f"{p}_y"])
-    include_4attk_cols.append('ball_x')
-    include_4attk_cols.append('ball_y')
-    feature_cols_C = [
-        col for col in defensive_df.columns
-        if col not in non_feature_cols
-        and col in include_4attk_cols
-    ]
+    attacker_roles = ["STZ", "ZO", "ORM", "OLM"]
+    feature_cols_C = []
+    for role in attacker_roles:
+        feature_cols_C += [f"O_{role}_x", f"O_{role}_y"]
+
+    feature_cols_C += ["ball_x", "ball_y"]
+
     print(feature_cols_C)
-    # --------------lavel encoder --------------#
-    le = LabelEncoder()
-    defensive_df["morphology"] = defensive_df["morphology"].astype(str)
-    defensive_df["morphology_id"] = le.fit_transform(defensive_df["morphology"])
-    X_list = []
-    y_list = []
+    print(len(feature_cols_C))
+
+    # --------------label encoding --------------#
+   
+    dataset_df["morphology"] = dataset_df["morphology"].astype(str)
+    dataset_df["morphology_id"] = dataset_df["morphology"].map(label_to_id)
+    missing = dataset_df[dataset_df["morphology_id"].isna()]["morphology"].unique()
+    print("mapping에 없는 label:", missing)
 
     #----------------- Sliding Window ------------------------#
+    X_list = []
+    y_list = []
     # 75 frame per sequences
     SEQ_LEN = 75
     STRIDE = 5
-    for seg_id, seg_df in defensive_df.groupby("segment_id"):
+    for seg_id, seg_df in dataset_df.groupby("global_segment_id"):
         seg_df = seg_df.reset_index(drop=True)
         
         if len(seg_df) < SEQ_LEN:
@@ -111,7 +119,7 @@ if __name__ == '__main__':
         for start in range(0, len(seg_df) - SEQ_LEN + 1, STRIDE):
             end = start + SEQ_LEN
             
-            X_seq = seg_df.iloc[start:end][feature_cols_A].values
+            X_seq = seg_df.iloc[start:end][feature_cols_C].values
             y_seq = seg_df.iloc[start:end]["morphology_id"].values
             
             X_list.append(X_seq)
@@ -175,8 +183,8 @@ if __name__ == '__main__':
     
     # Transformer
     model = TransformerMorphologyModel(
-        input_dim=input_dim_a,
-        num_classes=45,
+        input_dim=input_dim_c,
+        num_classes=51,
         seq_len=75,
         d_model=128,
         nhead=8,
@@ -188,7 +196,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
 
     # -------------- loss - cross entrophy --------------#
-    num_classes = 45
+    num_classes = 51
     classes, counts = np.unique(y_train, return_counts=True)
 
     class_counts = np.zeros(num_classes, dtype=np.float32)
