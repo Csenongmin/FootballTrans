@@ -38,15 +38,15 @@ def plot_kde(xy_objects, pitch):
         a.annotate("", xy=(-22, -25), xytext=(-51, -25), xycoords="data",
                     arrowprops=dict(arrowstyle="->", connectionstyle="arc3"), ha="center", va="top")
 
-    ax[0, 0].set_xlabel("TW", size=14)
-    ax[0, 1].set_xlabel("STZ", size=14)
-    ax[1, 0].set_xlabel("OLM", size=14)
-    ax[1, 1].set_xlabel("IVL", size=14)
+    # ax[0, 0].set_xlabel("IVL", size=14)
+    # ax[0, 1].set_xlabel("STZ", size=14)
+    # ax[1, 0].set_xlabel("OLM", size=14)
+    # ax[1, 1].set_xlabel("IVL", size=14)
 
-    sns.kdeplot(x=xy_objects["firstHalf"]["Home"].xy[:, 22], y=xy_objects["firstHalf"]["Home"].xy[:, 23], fill=True, color="red", alpha=0.5, ax=ax[0, 0])
-    sns.kdeplot(x=xy_objects["firstHalf"]["Home"].xy[:, 4], y=xy_objects["firstHalf"]["Home"].xy[:, 5], fill=True, color="green", alpha=0.5, ax=ax[0, 1])
-    sns.kdeplot(x=xy_objects["firstHalf"]["Home"].xy[:, 30], y=xy_objects["firstHalf"]["Home"].xy[:, 31], fill=True, color="blue", alpha=0.5, ax=ax[1, 0])
-    sns.kdeplot(x=xy_objects["firstHalf"]["Home"].xy[:, 8], y=xy_objects["firstHalf"]["Home"].xy[:, 9], fill=True, color="purple", alpha=0.5, ax=ax[1, 1])
+    # sns.kdeplot(x=xy_objects["firstHalf"]["Home"].xy[:, 22], y=xy_objects["firstHalf"]["Home"].xy[:, 23], fill=True, color="red", alpha=0.5, ax=ax[0, 0])
+    # sns.kdeplot(x=xy_objects["firstHalf"]["Home"].xy[:, 4], y=xy_objects["firstHalf"]["Home"].xy[:, 5], fill=True, color="green", alpha=0.5, ax=ax[0, 1])
+    # sns.kdeplot(x=xy_objects["firstHalf"]["Home"].xy[:, 30], y=xy_objects["firstHalf"]["Home"].xy[:, 31], fill=True, color="blue", alpha=0.5, ax=ax[1, 0])
+    # sns.kdeplot(x=xy_objects["firstHalf"]["Home"].xy[:, 8], y=xy_objects["firstHalf"]["Home"].xy[:, 9], fill=True, color="purple", alpha=0.5, ax=ax[1, 1])
 
     plt.show()
 

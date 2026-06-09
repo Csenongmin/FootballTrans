@@ -14,7 +14,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 batch_size = 64
-dataset_df = pd.read_csv("combined_defensive.csv")
+df1 = pd.read_csv("processed_dataset/combined_defensive1.csv")
+df2 = pd.read_csv("processed_dataset/combined_defensive2.csv")
 all_morphology_classes = [
     'line','2000','0200','0020','0002',
     '2220','2202','2022','0222','0022','2200','0202','2020',
@@ -32,6 +33,30 @@ label_to_id = {
 id_to_label = {
     idx: label for label, idx in label_to_id.items()
 }
+
+def make_windows_from_segments(df, feature_cols, target_col="morphology_id"):
+    X_list = []
+    y_list = []
+
+    for seg_id, seg_df in df.groupby("global_segment_id"):
+        seg_df = seg_df.sort_values("frame").reset_index(drop=True)
+
+        if len(seg_df) < SEQ_LEN:
+            continue
+
+        for start in range(0, len(seg_df) - SEQ_LEN + 1, STRIDE):
+            end = start + SEQ_LEN
+
+            X_seq = seg_df.iloc[start:end][feature_cols].values
+            y_seq = seg_df.iloc[start:end][target_col].values
+
+            X_list.append(X_seq)
+            y_list.append(y_seq)
+
+    X = np.array(X_list, dtype=np.float32)
+    y = np.array(y_list, dtype=np.int64)
+
+    return X, y
 
 def get_predictions(model, loader, device):
     model.eval()
@@ -56,6 +81,18 @@ def get_predictions(model, loader, device):
 
 if __name__ == '__main__':    
     # ------A. Home 11 + Away 11 + ball 1 ----- #
+    df1["match_id"] = "match1"
+    df2["match_id"] = "match2"
+    dataset_df = pd.concat([df1,df2], axis=0, ignore_index=True)
+    dataset_df["global_segment_id"] = (
+    dataset_df["match_id"].astype(str)
+        + "_"
+        + dataset_df["global_segment_id"].astype(str)
+    )
+
+    print(dataset_df.shape)
+    print(dataset_df["match_id"].value_counts())
+    print(dataset_df["global_segment_id"].nunique())
 
     feature_cols_A = [
         col for col in dataset_df.columns
@@ -67,7 +104,9 @@ if __name__ == '__main__':
             "frame_diff",
             "segment_id",
             "global_segment_id",
-            "defense_team"
+            "defense_team",
+            "match_id",'O_STZ_x',
+            'O_STZ_y', 'O_ZO_x', 'O_ZO_y', 'O_ORM_x', 'O_ORM_y', 'O_OLM_x','O_OLM_y'
         ]
     ]
 
@@ -84,7 +123,7 @@ if __name__ == '__main__':
 
     feature_cols_B += ["ball_x", "ball_y"]
 
-    print(len(feature_cols_B))  # 38
+    #print(len(feature_cols_B))  # 38
 
     # --------- C. Away 4 + Ball 1 -------- #
     attacker_roles = ["STZ", "ZO", "ORM", "OLM"]
@@ -94,8 +133,8 @@ if __name__ == '__main__':
 
     feature_cols_C += ["ball_x", "ball_y"]
 
-    print(feature_cols_C)
-    print(len(feature_cols_C))
+    #print(feature_cols_C)
+    #print(len(feature_cols_C)) # 10
 
     # --------------label encoding --------------#
    
@@ -104,60 +143,46 @@ if __name__ == '__main__':
     missing = dataset_df[dataset_df["morphology_id"].isna()]["morphology"].unique()
     print("mapping에 없는 label:", missing)
 
-    #----------------- Sliding Window ------------------------#
-    X_list = []
-    y_list = []
-    # 75 frame per sequences
-    SEQ_LEN = 75
-    STRIDE = 5
-    for seg_id, seg_df in dataset_df.groupby("global_segment_id"):
-        seg_df = seg_df.reset_index(drop=True)
-        
-        if len(seg_df) < SEQ_LEN:
-            continue
-        
-        for start in range(0, len(seg_df) - SEQ_LEN + 1, STRIDE):
-            end = start + SEQ_LEN
-            
-            X_seq = seg_df.iloc[start:end][feature_cols_C].values
-            y_seq = seg_df.iloc[start:end]["morphology_id"].values
-            
-            X_list.append(X_seq)
-            y_list.append(y_seq)
 
-    X = np.array(X_list, dtype=np.float32)
-    y = np.array(y_list, dtype=np.int64)
+    # --------------- train, validate, test segment split -----------#
+  
+    segments = dataset_df["global_segment_id"].unique()
 
-    print(X.shape)
-    print(y.shape)
-
-    # --------------- train, validate, test random split -----------#
-    num_samples = len(X)
-
-    indices = np.arange(len(X))
-
-    train_idx, temp_idx = train_test_split(
-        indices,
+    train_segments, temp_segments = train_test_split(
+        segments,
         test_size=0.3,
         random_state=42,
         shuffle=True
     )
 
-    val_idx, test_idx = train_test_split(
-        temp_idx,
+    val_segments, test_segments = train_test_split(
+        temp_segments,
         test_size=0.5,
         random_state=42,
         shuffle=True
     )
 
-    X_train, y_train = X[train_idx], y[train_idx]
-    X_val, y_val = X[val_idx], y[val_idx]
-    X_test, y_test = X[test_idx], y[test_idx]
+    train_df = dataset_df[dataset_df["global_segment_id"].isin(train_segments)].copy()
+    val_df = dataset_df[dataset_df["global_segment_id"].isin(val_segments)].copy()
+    test_df = dataset_df[dataset_df["global_segment_id"].isin(test_segments)].copy()
+
+    print(train_df.shape)
+    print(val_df.shape)
+    print(test_df.shape)
+
+    #----------------- Sliding Window ------------------------#
+    # 75 frame per sequences
+    SEQ_LEN = 75
+    STRIDE = 5
+    X_train, y_train = make_windows_from_segments(train_df, feature_cols_A)
+    X_val, y_val = make_windows_from_segments(val_df, feature_cols_A)
+    X_test, y_test = make_windows_from_segments(test_df, feature_cols_A)
 
     print(X_train.shape, y_train.shape)
     print(X_val.shape, y_val.shape)
     print(X_test.shape, y_test.shape)
 
+    #----------------- Construct dataset ------------------------#
     train_dataset = MorphologySequenceDataset(X_train, y_train)
     val_dataset = MorphologySequenceDataset(X_val, y_val)
     test_dataset = MorphologySequenceDataset(X_test, y_test)
@@ -183,7 +208,7 @@ if __name__ == '__main__':
     
     # Transformer
     model = TransformerMorphologyModel(
-        input_dim=input_dim_c,
+        input_dim=input_dim_a,
         num_classes=51,
         seq_len=75,
         d_model=128,
@@ -243,23 +268,51 @@ if __name__ == '__main__':
     print(classification_report(y_true, y_pred, digits=4))
 
     # ------------ confusion matrix --------------#
-    cm = confusion_matrix(y_true, y_pred, labels=np.arange(45))
+    # cm = confusion_matrix(y_true, y_pred, labels=np.arange(45))
 
-    plt.figure(figsize=(12, 10))
-    plt.imshow(cm)
-    plt.colorbar()
-    plt.xlabel("Predicted class")
-    plt.ylabel("True class")
-    plt.title("Confusion Matrix")
-    plt.savefig('confusion_tr.png')
-    cm_norm = cm.astype("float") / cm.sum(axis=1, keepdims=True)
-    cm_norm = np.nan_to_num(cm_norm)
+    # plt.figure(figsize=(12, 10))
+    # plt.imshow(cm)
+    # plt.colorbar()
+    # plt.xlabel("Predicted class")
+    # plt.ylabel("True class")
+    # plt.title("Confusion Matrix")
+    # plt.savefig('confusion_tr.png')
+    # cm_norm = cm.astype("float") / cm.sum(axis=1, keepdims=True)
+    # cm_norm = np.nan_to_num(cm_norm)
 
-    plt.figure(figsize=(12, 10))
-    plt.imshow(cm_norm, vmin=0, vmax=1)
-    plt.colorbar()
-    plt.xlabel("Predicted class")
-    plt.ylabel("True class")
-    plt.title("Normalized Confusion Matrix")
+    # plt.figure(figsize=(12, 10))
+    # plt.imshow(cm_norm, vmin=0, vmax=1)
+    # plt.colorbar()
+    # plt.xlabel("Predicted class")
+    # plt.ylabel("True class")
+    # plt.title("Normalized Confusion Matrix")
 
-    plt.savefig("confusion_matrix_normalized_tr.png", dpi=300, bbox_inches="tight")
+    # plt.savefig("confusion_matrix_normalized_tr.png", dpi=300, bbox_inches="tight")
+
+    #--------------- split class distribution --------- #
+    print("split 별 클래스 분포")
+    train_classes = set(np.unique(y_train))
+    val_classes = set(np.unique(y_val))
+    test_classes = set(np.unique(y_test))
+
+    print("num train classes:", len(train_classes))
+    print("num val classes:", len(val_classes))
+    print("num test classes:", len(test_classes))
+
+    print("Val classes not in train:", sorted(val_classes - train_classes))
+    print("Test classes not in train:", sorted(test_classes - train_classes))
+    def show_dist(y_split, name):
+        classes, counts = np.unique(y_split, return_counts=True)
+        df = pd.DataFrame({
+            "class_id": classes,
+            "count": counts,
+            "ratio": counts / counts.sum()
+        }).sort_values("count", ascending=False)
+
+        print(name)
+        print("num classes:", len(classes))
+        print(df.head(20))
+
+    show_dist(y_train, "train")
+    show_dist(y_val, "val")
+    show_dist(y_test, "test")
